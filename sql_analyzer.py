@@ -121,7 +121,8 @@ def index():
     <option value="mysql">MySQL</option>
     <option value="postgresql">PostgreSQL</option>
     <option value="sqlite">SQLite</option>
-    <option value="sqlserver">SQL Server</option>
+    <option value="sqlserver">SQL Server (T-SQL)</option>
+    <option value="oracle">Oracle (PL-SQL)</option>
     </select><br>
     <label>Version:</label>
     <input type="text" name="version" value="latest"><br>
@@ -370,90 +371,136 @@ def calculate_complexity_score(query):
 
 def analyze_query(query, dialect='mysql', version='latest'):
     """
-    Parse and analyze the SQL query for performance optimizations.
+    Parse and analyze the SQL query/script for performance optimizations.
+    Handles multiple statements in longer scripts.
     """
     parsed = sqlparse.parse(query)
     if not parsed:
         return "Invalid SQL query."
 
-    # Get the first statement
-    stmt = parsed[0]
+    all_suggestions = []
+    statement_count = len(parsed)
 
-    suggestions = []
+    # Overall complexity for the script
+    all_suggestions.append(f"Script contains {statement_count} statement(s).")
+    all_suggestions.append(calculate_complexity_score(query))
 
-    # Add complexity score
-    suggestions.append(calculate_complexity_score(query))
+    for i, stmt in enumerate(parsed, 1):
+        if not str(stmt).strip():
+            continue
+        suggestions = []
+        query_upper = str(stmt).upper()
 
-    # Basic analysis: check for SELECT without WHERE (full table scan)
-    query_upper = str(stmt).upper()
-    if 'SELECT' in query_upper and 'WHERE' not in query_upper:
-        suggestions.append("Warning: SELECT query without WHERE clause may perform full table scan. Consider adding filters or indexes. Explanation: Without a WHERE clause, the database must examine every row in the table, leading to poor performance on large datasets.")
-
-    # Check for JOINs and suggest indexes on join keys
-    if 'JOIN' in query_upper:
-        # Simple check: look for ON clauses
-        if 'ON' in query_upper:
-            suggestions.append("Consider adding indexes on JOIN keys (columns in ON clauses) to improve join performance. Explanation: JOINs without indexes on the joined columns require full table scans, significantly slowing down the query.")
-
-    # Check for subqueries
-    if 'SELECT' in query_upper and '(' in str(stmt) and ')' in str(stmt):
-        suggestions.append("Subqueries detected. Consider rewriting as JOINs if possible for better performance. Explanation: Subqueries may execute multiple times or hinder the optimizer; JOINs often allow better query planning.")
-
-    # Check for LIKE with leading wildcard
-    if 'LIKE' in query_upper and ("'%" in str(stmt) or "\"%" in str(stmt)):
-        suggestions.append("LIKE with leading '%' cannot use indexes efficiently. Consider full-text search or restructuring.")
-
-    # Check for ORDER BY without LIMIT/TOP
-    if 'ORDER BY' in query_upper:
-        if dialect == 'sqlserver':
-            if 'TOP' not in query_upper:
-                suggestions.append("ORDER BY without TOP may be slow on large tables. Consider adding TOP or indexing the ORDER BY columns. Explanation: Sorting large datasets without limits requires processing all rows, consuming excessive memory and time.")
+        # Statement type
+        if 'SELECT' in query_upper:
+            stmt_type = "SELECT"
+        elif 'INSERT' in query_upper:
+            stmt_type = "INSERT"
+        elif 'UPDATE' in query_upper:
+            stmt_type = "UPDATE"
+        elif 'DELETE' in query_upper:
+            stmt_type = "DELETE"
+        elif 'CREATE' in query_upper:
+            stmt_type = "CREATE"
         else:
-            if 'LIMIT' not in query_upper:
-                suggestions.append("ORDER BY without LIMIT may be slow on large tables. Consider adding LIMIT or indexing the ORDER BY columns. Explanation: Sorting large datasets without limits requires processing all rows, consuming excessive memory and time.")
+            stmt_type = "Other"
+        suggestions.append(f"Statement {i}: {stmt_type}")
 
-    # Check for DISTINCT without WHERE
-    if 'DISTINCT' in query_upper and 'WHERE' not in query_upper:
-        suggestions.append("DISTINCT without WHERE may scan the entire table. Ensure it's necessary.")
+        # Basic analysis: check for SELECT without WHERE (full table scan)
+        if 'SELECT' in query_upper and 'WHERE' not in query_upper:
+            suggestions.append("Warning: SELECT query without WHERE clause may perform full table scan. Consider adding filters or indexes.")
 
-    # Check for UNION without ALL
-    if 'UNION' in query_upper and 'ALL' not in query_upper:
-        suggestions.append("UNION removes duplicates, which can be slow. Use UNION ALL if duplicates are acceptable.")
+        # Check for JOINs and suggest indexes on join keys
+        if 'JOIN' in query_upper:
+            if 'ON' in query_upper:
+                suggestions.append("Consider adding indexes on JOIN keys (columns in ON clauses) to improve join performance.")
+            else:
+                suggestions.append("JOIN without ON clause detected; ensure proper join conditions.")
 
-    # Check for functions on columns in WHERE (potential index misuse)
-    where_part = str(stmt).upper().split('WHERE')[-1] if 'WHERE' in query_upper else ""
-    if any(func in where_part for func in ['UPPER(', 'LOWER(', 'SUBSTR(', 'DATE(', 'YEAR(']):
-        msg = "Functions on columns in WHERE clause may prevent index usage."
-        if dialect == 'mysql' and parse_version(version) >= 5.7:
-            msg += " Consider generated columns for indexing (MySQL 5.7+)."
+        # Check for subqueries
+        if 'SELECT' in query_upper and '(' in str(stmt) and ')' in str(stmt):
+            suggestions.append("Subqueries detected. Consider rewriting as JOINs if possible for better performance.")
+
+        # Check for CTEs (Common Table Expressions)
+        if 'WITH' in query_upper:
+            suggestions.append("CTEs (WITH clauses) detected. Ensure they are optimized; recursive CTEs can be expensive.")
+
+        # Check for window functions
+        if 'OVER (' in query_upper:
+            suggestions.append("Window functions detected. Ensure proper indexing on PARTITION BY and ORDER BY columns.")
+
+        # Check for LIKE with leading wildcard
+        if 'LIKE' in query_upper and ("'%" in str(stmt) or "\"%" in str(stmt)):
+            suggestions.append("LIKE with leading '%' cannot use indexes efficiently. Consider full-text search.")
+
+        # Check for ORDER BY without LIMIT/TOP
+        if 'ORDER BY' in query_upper:
+            if dialect == 'sqlserver':
+                if 'TOP' not in query_upper:
+                    suggestions.append("ORDER BY without TOP may be slow on large tables. Consider adding TOP or indexing.")
+            else:
+                if 'LIMIT' not in query_upper and 'FETCH' not in query_upper:
+                    suggestions.append("ORDER BY without LIMIT/FETCH may be slow on large tables. Consider adding LIMIT or indexing.")
+
+        # Check for DISTINCT without WHERE
+        if 'DISTINCT' in query_upper and 'WHERE' not in query_upper:
+            suggestions.append("DISTINCT without WHERE may scan the entire table. Ensure it's necessary.")
+
+        # Check for UNION without ALL
+        if 'UNION' in query_upper and 'ALL' not in query_upper:
+            suggestions.append("UNION removes duplicates, which can be slow. Use UNION ALL if duplicates are acceptable.")
+
+        # Check for functions on columns in WHERE
+        where_part = str(stmt).upper().split('WHERE')[-1] if 'WHERE' in query_upper else ""
+        if any(func in where_part for func in ['UPPER(', 'LOWER(', 'SUBSTR(', 'DATE(', 'YEAR(']):
+            msg = "Functions on columns in WHERE clause may prevent index usage."
+            if dialect == 'mysql' and parse_version(version) >= 5.7:
+                msg += " Consider generated columns for indexing."
+            elif dialect == 'sqlserver':
+                msg += " Consider computed columns."
+            elif dialect == 'postgresql':
+                msg += " Consider expression indexes."
+            elif dialect == 'oracle':
+                msg += " Consider function-based indexes."
+            suggestions.append(msg)
+
+        # Check for IN with many values
+        if 'IN (' in query_upper and str(stmt).count(',') > 10:
+            suggestions.append("Large IN lists can be slow. Consider JOIN or temporary tables.")
+
+        # Dialect-specific checks
+        if dialect == 'postgresql':
+            if 'ILIKE' in query_upper:
+                suggestions.append("ILIKE is case-insensitive; ensure proper indexing or use text search.")
+            if 'ARRAY' in query_upper:
+                suggestions.append("Array operations detected; ensure GIN indexes for array columns.")
         elif dialect == 'sqlserver':
-            msg += " Consider computed columns or persisted computed columns for indexing."
-        else:
-            msg += " Consider restructuring the query."
-        suggestions.append(msg)
+            if 'MERGE' in query_upper:
+                suggestions.append("MERGE statement detected; ensure proper indexing on join keys.")
+        elif dialect == 'oracle':
+            if 'CONNECT BY' in query_upper:
+                suggestions.append("Hierarchical query detected; ensure proper indexing for performance.")
+        elif dialect == 'mysql':
+            if 'STRAIGHT_JOIN' in query_upper:
+                suggestions.append("STRAIGHT_JOIN forces join order; use only if optimizer is incorrect.")
 
-    # Check for IN with many values
-    if 'IN (' in query_upper and str(stmt).count(',') > 10:  # rough check
-        suggestions.append("Large IN lists can be slow. Consider JOIN or temporary tables.")
+        # Security checks
+        if '+' in str(stmt) and ('WHERE' in query_upper or 'SET' in query_upper):
+            suggestions.append("Potential SQL injection risk: String concatenation in WHERE/SET clauses.")
+        if 'UNION SELECT' in query_upper and any(char.isdigit() for char in str(stmt).split('UNION SELECT')[1][:10]):
+            suggestions.append("Potential SQL injection: Suspicious UNION SELECT.")
+        if "'" in str(stmt) and 'WHERE' in query_upper and '?' not in str(stmt) and ':' not in str(stmt):
+            suggestions.append("Consider parameterized queries to prevent SQL injection.")
 
-    # Security checks
-    # Check for potential SQL injection via string concatenation
-    if '+' in str(stmt) and ('WHERE' in query_upper or 'SET' in query_upper):
-        suggestions.append("Potential SQL injection risk: String concatenation in WHERE/SET clauses. Use parameterized queries.")
+        if len(suggestions) == 1:  # Only statement type
+            suggestions.append("No obvious issues detected in this statement.")
 
-    # Check for suspicious UNION patterns
-    if 'UNION SELECT' in query_upper and any(char.isdigit() for char in str(stmt).split('UNION SELECT')[1][:10]):
-        suggestions.append("Potential SQL injection: Suspicious UNION SELECT with numbers. Ensure input is sanitized.")
+        all_suggestions.extend(suggestions)
 
-    # General parameterized query reminder
-    if "'" in str(stmt) and 'WHERE' in query_upper and '?' not in str(stmt) and ':' not in str(stmt):
-        suggestions.append("Consider using parameterized queries to prevent SQL injection. Avoid embedding user input directly in SQL strings.")
+    if len(all_suggestions) == 2:  # Only count and complexity
+        all_suggestions.append("No obvious performance issues detected in the script.")
 
-    # Placeholder for more advanced analysis
-    if len(suggestions) == 1:  # Only complexity score
-        suggestions.append("No obvious performance issues detected.")
-
-    return "\n".join(suggestions)
+    return "\n".join(all_suggestions)
 
 def benchmark_query(query):
     """
@@ -486,7 +533,7 @@ def main():
     parser = argparse.ArgumentParser(description='SQL Query Performance Analyzer')
     parser.add_argument('query', nargs='?', help='SQL query to analyze')
     parser.add_argument('--file', help='File containing SQL queries to analyze (one per line or separated by ;)')
-    parser.add_argument('--dialect', choices=['mysql', 'postgresql', 'sqlite', 'sqlserver'], default='mysql', help='SQL dialect (default: mysql)')
+    parser.add_argument('--dialect', choices=['mysql', 'postgresql', 'sqlite', 'sqlserver', 'oracle'], default='mysql', help='SQL dialect (default: mysql)')
     parser.add_argument('--version', default='latest', help='Database version (e.g., 8.0, 2019) (default: latest)')
     parser.add_argument('--benchmark', action='store_true', help='Benchmark the query against a test database')
     parser.add_argument('--list-history', action='store_true', help='List recent query history')

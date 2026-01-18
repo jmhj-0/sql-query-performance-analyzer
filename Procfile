@@ -1,1 +1,1 @@
-web: PYTHONPATH=. python sql_analyzer.py --serve
+web: python sql_analyzer.py --serve

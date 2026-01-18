@@ -1,0 +1,1 @@
+web: python sql_analyzer.py --serve

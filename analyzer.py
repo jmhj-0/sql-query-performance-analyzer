@@ -102,6 +102,11 @@ def calculate_complexity_score(query: str) -> str:
 
 def analyze_query(query: str, dialect: str = 'mysql', version: str = 'latest') -> str:
     """Parse and analyze the SQL query/script for performance optimizations."""
+    # Basic validation: check for SQL keywords
+    sql_keywords = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'ALTER', 'DROP', 'WITH', 'MERGE']
+    if not any(keyword in query.upper() for keyword in sql_keywords):
+        raise InvalidSQLQueryError("Invalid SQL query: no recognized SQL keywords found.")
+
     parsed = sqlparse.parse(query)
     if not parsed:
         raise InvalidSQLQueryError("Invalid SQL query.")

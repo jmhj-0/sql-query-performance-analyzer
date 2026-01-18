@@ -1,6 +1,6 @@
 import pytest
-from sql_query_performance_analyzer.analyzer import analyze_query, calculate_complexity_score
-from sql_query_performance_analyzer.exceptions import InvalidSQLQueryError
+from SQLQueryPerformanceAnalyzer.analyzer import analyze_query, calculate_complexity_score
+from SQLQueryPerformanceAnalyzer.exceptions import InvalidSQLQueryError
 
 
 def test_calculate_complexity_score():

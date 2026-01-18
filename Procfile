@@ -1,1 +1,1 @@
-web: python sql_analyzer.py --serve
+web: python -m sql_query_performance_analyzer.main --serve

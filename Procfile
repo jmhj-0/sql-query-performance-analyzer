@@ -1,1 +1,1 @@
-web: python -m sql_query_performance_analyzer.main --serve
+web: PYTHONPATH=. python sql_analyzer.py --serve

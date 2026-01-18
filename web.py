@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
-from .analyzer import analyze_query, benchmark_query
-from .config import SECRET_KEY, DEBUG
-from .utils import logger
+from analyzer import analyze_query, benchmark_query
+from config import SECRET_KEY, DEBUG
+from utils import logger
 
 
 def create_app() -> Flask:

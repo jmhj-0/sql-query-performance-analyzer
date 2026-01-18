@@ -1,10 +1,10 @@
 import argparse
 import os
 from pathlib import Path
-from .analyzer import analyze_query, benchmark_query, list_history, save_to_history
-from .web import create_app
-from .utils import setup_logging
-from .config import LOG_LEVEL
+from analyzer import analyze_query, benchmark_query, list_history, save_to_history
+from web import create_app
+from utils import setup_logging
+from config import LOG_LEVEL
 
 
 def main() -> None:

@@ -3,9 +3,9 @@ import time
 from pathlib import Path
 from typing import List, Optional
 import sqlparse
-from .config import HISTORY_DB_PATH
-from .exceptions import InvalidSQLQueryError, BenchmarkError
-from .utils import parse_version, logger
+from config import HISTORY_DB_PATH
+from exceptions import InvalidSQLQueryError, BenchmarkError
+from utils import parse_version, logger
 
 
 def init_history_db() -> None:
